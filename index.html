@@ -32,7 +32,7 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
 
-    // Retina Display Support (begrenzt auf 2 für gute Performance am Handy)
+    // Retina Display Support
     let dpr = Math.min(window.devicePixelRatio || 1, 2);
     let width, height;
 
@@ -61,7 +61,6 @@
             pCanvas.width = 20; pCanvas.height = 20;
             let pCtx = pCanvas.getContext('2d');
             
-            // Weicher Glow-Effekt
             let grad = pCtx.createRadialGradient(10, 10, 0, 10, 10, 10);
             grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 1)`);
             grad.addColorStop(0.3, `rgba(${col.r}, ${col.g}, ${col.b}, 0.6)`);
@@ -83,16 +82,14 @@
         constructor(x, y, delay) {
             this.x = x; this.y = y;
             
-            // Wähle eine Farbe per Zufall (Lila/Flieder/Rosa)
             this.texture = particleTextures[Math.floor(Math.random() * particleTextures.length)];
             
-            this.baseSize = 0.5 + Math.random() * 2.5; // Sehr feine Punkte
+            this.baseSize = 0.5 + Math.random() * 2.5; 
             this.currentSize = 0;
             
             this.progress = 0;
             this.delay = delay;
             
-            // Physik für den Zerfall
             this.vx = (Math.random() - 0.5) * 6;
             this.vy = (Math.random() - 1) * 4;
             this.gravity = 0.1;
@@ -105,12 +102,10 @@
                     this.progress += 0.05; 
                     if (this.progress > 1) this.progress = 1;
                     
-                    // Weiches Aufpoppen
                     let bounce = Math.sin(this.progress * Math.PI / 2);
                     this.currentSize = this.baseSize * bounce;
                 }
             } else {
-                // Zerfalls-Physik
                 this.vy += this.gravity;
                 this.x += this.vx;
                 this.y += this.vy;
@@ -121,7 +116,6 @@
         draw(ctx) {
             if (this.progress <= 0 || this.alpha <= 0) return;
             ctx.globalAlpha = this.alpha;
-            // -10, weil das vorgefertigte Bild 20x20 groß ist (Mitte ist bei 10)
             ctx.drawImage(this.texture, this.x - this.currentSize * 10, this.y - this.currentSize * 10, this.currentSize * 20, this.currentSize * 20);
         }
     }
@@ -151,7 +145,7 @@
             if (isShattering) return; 
 
             if (globalProgress > this.delay && this.progress < 1) {
-                this.progress += 0.035; // Schnelles, fließendes Wachstum
+                this.progress += 0.035; 
                 if (this.progress > 1) this.progress = 1;
                 
                 this.endX = this.startX + Math.cos(this.angle + this.curve) * this.length * this.progress;
@@ -162,7 +156,6 @@
                 this.hasSpawned = true;
                 
                 if (this.depth < this.maxDepth) {
-                    // Feuerwerks-Verzweigung (mehr Äste am Anfang, weniger am Ende)
                     let branchesCount = this.depth === 0 ? 4 : (2 + Math.floor(Math.random() * 3));
                     
                     for (let i = 0; i < branchesCount; i++) {
@@ -172,7 +165,6 @@
                         new FineBranch(this.endX, this.endY, nAngle, nLen, nWidth, this.depth + 1, this.maxDepth, globalProgress);
                     }
                 } else {
-                    // Generiert die Blüten-Wolke am Astende
                     this.spawnCloud(this.endX, this.endY, 25, globalProgress);
                 }
             }
@@ -182,10 +174,8 @@
             for(let i = 0; i < amount; i++) {
                 let radius = 5 + Math.random() * 35;
                 let a = Math.random() * Math.PI * 2;
-                
                 let px = x + Math.cos(a) * radius;
                 let py = y + Math.sin(a) * radius;
-                
                 let pDelay = globalProgress + Math.random() * 0.5;
                 allParticles.push(new CloudParticle(px, py, pDelay));
             }
@@ -200,7 +190,6 @@
             let cpY = (this.startY + this.endY)/2 + Math.cos(this.angle) * (this.length*0.1);
             ctx.quadraticCurveTo(cpX, cpY, this.endX, this.endY);
             
-            // Hellgrüne, extrem feine Stiele wie im Video
             ctx.strokeStyle = `rgba(130, 190, 120, 0.8)`;
             ctx.lineWidth = Math.max(0.3, this.width); 
             ctx.lineCap = 'round';
@@ -208,7 +197,6 @@
         }
     }
 
-    // --- SYSTEM CONTROLLER ---
     let time = 0;
 
     function plantNew(x, y) {
@@ -218,9 +206,9 @@
             isShattering = false;
         }
 
-        let maxDepth = 4 + Math.floor(Math.random() * 2); // Kürzere Verzweigung für die "Feuerwerks-Optik"
-        let startWidth = 2.5; // Dünner Hauptstamm
-        let startLength = 120 + Math.random() * 60; // Sehr langer, eleganter Hals
+        let maxDepth = 4 + Math.floor(Math.random() * 2); 
+        let startWidth = 2.5; 
+        let startLength = 120 + Math.random() * 60; 
         let baseAngle = -Math.PI / 2 + (Math.random() - 0.5) * 0.1;
         
         time = 0; 
@@ -230,34 +218,76 @@
     function shatterEverything() {
         if (allBranches.length === 0 || isShattering) return;
         isShattering = true;
-        allBranches = []; // Äste verschwinden einfach, Blüten fallen
+        allBranches = []; 
     }
 
-    // --- EINGABEN ---
+    // --- DER TOUCH FIX ---
     let lastTap = 0;
     function handleTouch(e) {
         let now = Date.now();
-        let tapLength = now - lastTap;
-        let x = e.clientX || (e.touches && e.touches[0].clientX);
-        let y = e.clientY || (e.touches && e.touches[0].clientY);
-
-        if (tapLength < 300 && tapLength > 0) {
-            shatterEverything(); // Doppelklick zerbricht
-        } else {
-            setTimeout(() => {
-                if (Date.now() - lastTap >= 300) {
-                    if (x !== undefined && y !== undefined) plantNew(x, y);
-                }
-            }, 300);
-        }
+        if (now - lastTap < 100) return; // Geisterklick blockieren
         lastTap = now;
+        
+        let x = e.clientX || (e.touches && e.touches.length > 0 && e.touches[0].clientX);
+        let y = e.clientY || (e.touches && e.touches.length > 0 && e.touches[0].clientY);
+
+        if(x !== undefined && y !== undefined) {
+            plantNew(x, y); // Garantiert sofort ausführen
+        }
     }
 
     window.addEventListener('pointerdown', handleTouch);
-    window.addEventListener('touchstart', handleTouch, {passive: true});
-    window.addEventListener('dblclick', shatterEverything);
 
+    // Auf dem Handy kann man durch Schütteln alles zerstören
     if (window.DeviceMotionEvent) {
         let lx = 0, ly = 0, lz = 0;
         window.addEventListener('devicemotion', (e) => {
-            let acc = e.
+            let acc = e.accelerationIncludingGravity;
+            if (!acc) return;
+            if (Math.abs(acc.x - lx) + Math.abs(acc.y - ly) + Math.abs(acc.z - lz) > 25) {
+                shatterEverything();
+            }
+            lx = acc.x; ly = acc.y; lz = acc.z;
+        });
+    }
+    
+    // Für PC Nutzer ein Doppelklick Fallback
+    window.addEventListener('dblclick', shatterEverything);
+
+    // --- RENDER LOOP ---
+    function animate() {
+        // Nutzt jetzt die logischen Werte width/height statt der skalierten Canvas-Werte
+        ctx.fillStyle = 'rgba(5, 5, 5, 0.4)';
+        ctx.fillRect(0, 0, width, height); 
+
+        if (!isShattering) {
+            time += 0.015; 
+            allBranches.forEach(b => {
+                b.update(time);
+                b.draw(ctx);
+            });
+        }
+
+        ctx.globalCompositeOperation = 'screen'; 
+        
+        for (let i = allParticles.length - 1; i >= 0; i--) {
+            let p = allParticles[i];
+            p.update(time);
+            p.draw(ctx);
+            
+            if (p.alpha <= 0 || p.y > height + 100) {
+                allParticles.splice(i, 1);
+            }
+        }
+        
+        ctx.globalCompositeOperation = 'source-over'; 
+        ctx.globalAlpha = 1;
+
+        requestAnimationFrame(animate);
+    }
+    
+    animate();
+</script>
+
+</body>
+</html>
