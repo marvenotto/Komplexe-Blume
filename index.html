@@ -3,313 +3,365 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ethereal Flora</title>
+    <title>Für Naya - Volumetric Ethereal Flora</title>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
-            /* Tiefschwarzer Hintergrund, damit die feinen Partikel leuchten wie im Video */
-            background-color: #030303; 
+            /* Tiefes, endloses Schwarz für maximalen Kontrast der leuchtenden Wolken */
+            background-color: #020202; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
         canvas { 
             display: block; width: 100%; height: 100%; 
-            touch-action: none; /* Verhindert Scrollen beim Tippen */
+            touch-action: none;
         }
+        .dedication {
+            position: absolute; bottom: 40px; width: 100%; text-align: center;
+            color: rgba(255, 255, 255, 0.2); letter-spacing: 8px; font-size: 11px;
+            font-weight: 300; pointer-events: none; text-transform: uppercase;
+            animation: fadeIn 5s ease-in-out;
+        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body>
 
+<div class="dedication">Für Naya</div>
 <canvas id="canvas"></canvas>
 
 <script>
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
 
+    // --- ULTRA-HIGH RESOLUTION (Retina / OLED Displays) ---
+    let dpr = window.devicePixelRatio || 1;
+    let width, height;
+
     function resize() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        width = window.innerWidth;
+        height = window.innerHeight;
+        // Interne Auflösung des Canvas drastisch erhöhen für filigrane Schärfe
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        ctx.scale(dpr, dpr);
     }
     window.addEventListener('resize', resize);
     resize();
 
-    // Arrays für unsere Objekte
-    let branches = [];
-    let flowers = [];
-    let fallingParticles = [];
-
-    // Farbpaletten für den fluffigen Nebel-Effekt (Flieder, Lila, Rosa, Weiß)
-    const flowerColors = [
-        'rgba(216, 180, 226, 0.7)', // Zartes Flieder
-        'rgba(180, 130, 200, 0.6)', // Kräftigeres Lila
-        'rgba(240, 200, 220, 0.8)', // Blasses Rosa
-        'rgba(255, 255, 255, 0.8)', // Weiß für Highlights
-        'rgba(160, 190, 150, 0.5)'  // Ganz zartes Grün dazwischen
+    // --- PRE-RENDERING DER PARTIKEL-WOLKEN (Performance!) ---
+    // Wir erstellen unsichtbare Bilder der Blütenpunkte mit feinem Glow
+    const particleTextures = [];
+    const colors = [
+        { r: 70, g: 30, b: 90 },    // Tiefes Hintergrund-Violett
+        { r: 150, g: 90, b: 180 },  // Mittleres Lila
+        { r: 216, g: 150, b: 200 }, // Zartes Pink
+        { r: 255, g: 220, b: 240 }, // Hellrosa Highlights
+        { r: 255, g: 255, b: 255 }  // Pures Weiß für die vordersten Spitzen
     ];
 
-    // --- DIE ÄSTE (Wachsen wie im Video) ---
-    class Branch {
-        constructor(x, y, angle, length, width, depth, maxDepth) {
-            this.startX = x;
-            this.startY = y;
-            this.angle = angle;
-            this.length = length;
-            this.width = width;
-            this.depth = depth;
-            this.maxDepth = maxDepth;
+    function createParticleTextures() {
+        colors.forEach((col, index) => {
+            let pCanvas = document.createElement('canvas');
+            pCanvas.width = 16; pCanvas.height = 16;
+            let pCtx = pCanvas.getContext('2d');
+            
+            // Erzeugt einen weichen, ätherischen Leuchteffekt (Glow)
+            let grad = pCtx.createRadialGradient(8, 8, 0, 8, 8, 8);
+            grad.addColorStop(0, `rgba(${col.r}, ${col.g}, ${col.b}, 1)`);
+            grad.addColorStop(0.4, `rgba(${col.r}, ${col.g}, ${col.b}, 0.8)`);
+            grad.addColorStop(1, `rgba(${col.r}, ${col.g}, ${col.b}, 0)`);
+            
+            pCtx.fillStyle = grad;
+            pCtx.beginPath(); pCtx.arc(8, 8, 8, 0, Math.PI * 2); pCtx.fill();
+            particleTextures.push({ img: pCanvas, depthLevel: index }); // Index 0 = Hinten, Index 4 = Vorne
+        });
+    }
+    createParticleTextures();
+
+    // Globale Listen für den Render-Loop
+    let allBranches = [];
+    let allParticles = [];
+    let isShattering = false;
+
+    // --- 3D PARTIKEL KLASSE ---
+    class VolumetricParticle {
+        constructor(x, y, z, delay) {
+            this.x = x; this.y = y; this.z = z; // Z entscheidet über Tiefe (-100 bis +100)
+            
+            // Berechne die optische Tiefe
+            let zNormalized = (this.z + 100) / 200; // 0 (ganz hinten) bis 1 (ganz vorne)
+            
+            // Wähle die Textur basierend auf der Tiefe (Hinten = Dunkel/Lila, Vorne = Hell/Weiß)
+            let colorIndex = Math.min(4, Math.max(0, Math.floor(zNormalized * 5)));
+            this.texture = particleTextures[colorIndex].img;
+            
+            // Größe basiert auf Tiefe (perspektivische Verzerrung)
+            this.baseSize = 0.5 + (zNormalized * 2) + Math.random(); // Winzig klein bis max 3.5
+            this.currentSize = 0;
             
             this.progress = 0;
-            // Je feiner der Ast, desto langsamer/sanfter wächst er
-            this.speed = 0.015 + (Math.random() * 0.015);
+            this.delay = delay;
             
-            this.endX = this.startX;
-            this.endY = this.startY;
-            this.hasBranched = false;
-            
-            // Leichte, organische Krümmung für jeden Ast
-            this.curve = (Math.random() - 0.5) * 0.5;
+            // Für den Shatter-Effekt
+            this.vx = (Math.random() - 0.5) * (4 + zNormalized * 4);
+            this.vy = (Math.random() - 1) * 3 - (zNormalized * 2);
+            this.gravity = 0.08 + (zNormalized * 0.05);
+            this.alpha = 1;
         }
 
-        update() {
-            if (this.progress < 1) {
-                this.progress += this.speed;
-                if (this.progress > 1) this.progress = 1;
-            }
-
-            this.endX = this.startX + Math.cos(this.angle + this.curve) * this.length * this.progress;
-            this.endY = this.startY + Math.sin(this.angle + this.curve) * this.length * this.progress;
-
-            // Verzweigen, wenn der Ast fast ausgewachsen ist
-            if (this.progress > 0.9 && !this.hasBranched) {
-                this.hasBranched = true;
-
-                if (this.depth < this.maxDepth) {
-                    // 2 bis 4 neue feine Äste
-                    let numBranches = 2 + Math.floor(Math.random() * 3);
-                    for (let i = 0; i < numBranches; i++) {
-                        let newAngle = this.angle + (Math.random() - 0.5) * 1.5;
-                        let newLength = this.length * (0.6 + Math.random() * 0.3);
-                        let newWidth = this.width * 0.6; // Wird extrem dünn
-                        branches.push(new Branch(this.endX, this.endY, newAngle, newLength, newWidth, this.depth + 1, this.maxDepth));
-                    }
-                } else {
-                    // An den Spitzen entsteht die "Blüten-Wolke" (wie im Video)
-                    let numFlowers = 15 + Math.floor(Math.random() * 20); // Sehr viele Punkte pro Astende
-                    for (let i = 0; i < numFlowers; i++) {
-                        flowers.push(new FlowerParticle(this.endX, this.endY));
-                    }
+        update(globalProgress) {
+            if (!isShattering) {
+                // Wachstums-Animation
+                if (globalProgress > this.delay && this.progress < 1) {
+                    this.progress += 0.05; 
+                    if (this.progress > 1) this.progress = 1;
+                    
+                    // Weiches, wolkiges Aufpoppen
+                    let bounce = Math.sin(this.progress * Math.PI / 2);
+                    this.currentSize = this.baseSize * bounce;
                 }
+            } else {
+                // Zerfalls-Animation (Physik)
+                this.vy += this.gravity;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.alpha -= 0.005; // Langsames Ausfaden
             }
         }
 
         draw(ctx) {
-            if (this.progress === 0) return;
+            if (this.progress <= 0 || this.alpha <= 0) return;
+            ctx.globalAlpha = this.alpha;
+            // Zeichnet das weiche, vorgeladene Bild extrem performant
+            ctx.drawImage(this.texture, this.x - this.currentSize, this.y - this.currentSize, this.currentSize * 2, this.currentSize * 2);
+        }
+    }
+
+    // --- DIE HAUCHFEINEN, 3D VERZWEIGUNGEN ---
+    class FilamentBranch {
+        constructor(x, y, z, angle, length, width, depth, maxDepth, delay) {
+            this.startX = x; this.startY = y; this.z = z;
+            this.angle = angle; 
+            this.length = length;
+            // Je tiefer die Ebene, desto dünner der Ast. Limit durch dpr macht ihn haarfein!
+            this.width = width; 
+            this.depth = depth;
+            this.maxDepth = maxDepth;
+            this.delay = delay;
+            
+            this.progress = 0;
+            this.children = [];
+            this.hasSpawned = false;
+            
+            // "Zittrige", organische Wuchsform
+            this.curve = (Math.random() - 0.5) * 0.6;
+            this.endX = this.startX;
+            this.endY = this.startY;
+            this.endZ = this.z + (Math.random() - 0.5) * 30; // Ast wächst auch in die Tiefe!
+            
+            allBranches.push(this);
+        }
+
+        update(globalProgress) {
+            if (isShattering) return; // Äste verschwinden beim Shattern langsam
+
+            if (globalProgress > this.delay && this.progress < 1) {
+                this.progress += 0.03; // Wachstums-Speed
+                if (this.progress > 1) this.progress = 1;
+                
+                this.endX = this.startX + Math.cos(this.angle + this.curve) * this.length * this.progress;
+                this.endY = this.startY + Math.sin(this.angle + this.curve) * this.length * this.progress;
+            }
+
+            if (this.progress > 0.8 && !this.hasSpawned) {
+                this.hasSpawned = true;
+                
+                if (this.depth < this.maxDepth) {
+                    // Verzweigung: 2 bis 4 haarfeine neue Äste
+                    let branches = depth === 0 ? 3 : 2 + Math.floor(Math.random() * 3);
+                    for (let i = 0; i < branches; i++) {
+                        let nAngle = this.angle + (Math.random() - 0.5) * 1.8;
+                        let nLen = this.length * (0.6 + Math.random() * 0.3);
+                        let nWidth = this.width * 0.6;
+                        new FilamentBranch(this.endX, this.endY, this.endZ, nAngle, nLen, nWidth, this.depth + 1, this.maxDepth, globalProgress);
+                    }
+                    
+                    // Manchmal bilden sich schon am Ast kleine Wolken-Cluster
+                    if (this.depth > 2 && Math.random() > 0.5) {
+                        this.spawnCloud(this.endX, this.endY, this.endZ, 10, globalProgress);
+                    }
+                } else {
+                    // An den äußersten Spitzen: Gigantische Partikel-Wolken Explosion!
+                    this.spawnCloud(this.endX, this.endY, this.endZ, 45, globalProgress);
+                }
+            }
+        }
+
+        spawnCloud(x, y, z, amount, globalProgress) {
+            // Generiert eine kugelförmige 3D-Wolke aus Punkten
+            for(let i = 0; i < amount * (1 + Math.random()); i++) {
+                // Radius der Wolke
+                let radius = 5 + Math.random() * 35;
+                let a = Math.random() * Math.PI * 2;
+                let b = Math.random() * Math.PI * 2;
+                
+                // Sphärische 3D Verteilung
+                let px = x + Math.sin(a) * Math.cos(b) * radius;
+                let py = y + Math.sin(a) * Math.sin(b) * radius;
+                let pz = z + Math.cos(a) * radius; 
+                
+                let pDelay = globalProgress + Math.random() * 0.5;
+                allParticles.push(new VolumetricParticle(px, py, pz, pDelay));
+            }
+        }
+
+        draw(ctx) {
+            if (this.progress === 0 || isShattering) return;
+            
+            let zNormalized = (this.z + 100) / 200;
+            // Äste im Hintergrund sind dunkler, Äste vorne heller grün
+            let r = 30 + zNormalized * 50;
+            let g = 60 + zNormalized * 80;
+            let b = 40 + zNormalized * 50;
             
             ctx.beginPath();
             ctx.moveTo(this.startX, this.startY);
-            // Organischer Bogen
-            let cpX = (this.startX + this.endX) / 2 + Math.sin(this.angle) * (this.length * 0.2);
-            let cpY = (this.startY + this.endY) / 2 + Math.cos(this.angle) * (this.length * 0.2);
+            let cpX = (this.startX + this.endX)/2 + Math.sin(this.angle) * (this.length*0.2);
+            let cpY = (this.startY + this.endY)/2 + Math.cos(this.angle) * (this.length*0.2);
             ctx.quadraticCurveTo(cpX, cpY, this.endX, this.endY);
             
-            // Grünlicher Stamm, der nach oben hin immer zarter und blasser wird
-            ctx.strokeStyle = `rgba(130, 190, 120, ${1 - (this.depth / (this.maxDepth + 2))})`;
-            ctx.lineWidth = Math.max(0.2, this.width); // Mindestens 0.2px für extrem feine Haarlinien
-            ctx.lineCap = 'round';
+            ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.8)`;
+            ctx.lineWidth = Math.max(0.1, this.width); // HAUCHDÜNN!
             ctx.stroke();
         }
     }
 
-    // --- DIE BLÜTEN-WOLKEN ---
-    class FlowerParticle {
-        constructor(x, y) {
-            this.originX = x;
-            this.originY = y;
-            // Sie spreizen sich leicht vom Ast-Ende weg ab
-            this.offsetX = (Math.random() - 0.5) * 40;
-            this.offsetY = (Math.random() - 0.5) * 40;
-            
-            this.x = x;
-            this.y = y;
-            
-            this.color = flowerColors[Math.floor(Math.random() * flowerColors.length)];
-            this.size = 0.5 + Math.random() * 2; // Winzige Punkte!
-            
-            this.progress = 0;
-            this.delay = Math.random() * 30; // Leicht verzögertes Aufploppen
-            this.timer = 0;
-        }
+    // --- SYSTEM CONTROLLER ---
+    let time = 0;
 
-        update() {
-            this.timer++;
-            if (this.timer > this.delay && this.progress < 1) {
-                this.progress += 0.05;
-                if (this.progress > 1) this.progress = 1;
-            }
-            
-            // Sie "wachsen" sanft an ihre Endposition
-            let ease = 1 - Math.pow(1 - this.progress, 3); // Cubic ease out
-            this.x = this.originX + this.offsetX * ease;
-            this.y = this.originY + this.offsetY * ease;
-        }
-
-        draw(ctx) {
-            if (this.progress <= 0) return;
-            ctx.fillStyle = this.color;
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.size * this.progress, 0, Math.PI * 2);
-            ctx.fill();
-        }
-    }
-
-    // --- ZERFALLENDE PARTIKEL (Beim Doppelklick) ---
-    class FallingParticle {
-        constructor(x, y, color, size, isBranch) {
-            this.x = x;
-            this.y = y;
-            this.color = color;
-            this.size = size;
-            this.isBranch = isBranch; // Unterscheidung zwischen Ast-Fragmenten und Blüten
-            
-            // Explosion in alle Richtungen, dann Fall
-            this.vx = (Math.random() - 0.5) * 8;
-            this.vy = (Math.random() - 0.5) * 8 - 2; 
-            this.gravity = 0.15 + Math.random() * 0.1;
-            
-            this.alpha = 1;
-            this.decay = 0.005 + Math.random() * 0.01; // Verschwinden langsam
-        }
-
-        update() {
-            this.vy += this.gravity;
-            this.x += this.vx;
-            this.y += this.vy;
-            this.alpha -= this.decay;
-        }
-
-        draw(ctx) {
-            if (this.alpha <= 0) return;
-            ctx.globalAlpha = this.alpha;
-            ctx.fillStyle = this.color;
-            
-            ctx.beginPath();
-            if (this.isBranch) {
-                // Äste fallen als kleine Striche
-                ctx.fillRect(this.x, this.y, this.size, this.size * 3);
-            } else {
-                // Blüten fallen als Punkte
-                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-                ctx.fill();
-            }
-            ctx.globalAlpha = 1;
-        }
-    }
-
-    // --- FUNKTIONEN ---
-
-    // Startet eine komplett neue Pflanze
     function plantNew(x, y) {
-        // Räumt alte wachsende Pflanzen auf, wenn man neu klickt (damit es nicht laggt)
-        branches = [];
-        flowers = [];
+        if (isShattering) {
+            // Räumt alles weg für eine neue Pflanze
+            allBranches = [];
+            allParticles = [];
+            isShattering = false;
+        }
+
+        // Maximale Komplexität: Tiefe 6 bis 7
+        let maxDepth = 6 + Math.floor(Math.random() * 2);
+        let startWidth = 2.5; // Sehr fein
+        let startLength = 100 + Math.random() * 50;
+        let baseAngle = -Math.PI / 2 + (Math.random() - 0.5) * 0.2;
         
-        // Zufällige Parameter für eine NEUE, einzigartige Struktur
-        let maxDepth = 5 + Math.floor(Math.random() * 3); // 5 bis 7 Ebenen tief
-        let startLength = 100 + Math.random() * 80; // Wie hoch der Hauptstamm wird
-        let startWidth = 3 + Math.random() * 2; // Ziemlich dünn von Anfang an
-        
-        // Pflanzt den Hauptstamm, der gerade nach oben wächst
-        branches.push(new Branch(x, y, -Math.PI / 2, startLength, startWidth, 0, maxDepth));
+        time = 0; // Reset Timer
+        new FilamentBranch(x, y, 0, baseAngle, startLength, startWidth, 0, maxDepth, 0);
     }
 
-    // Zerstört die aktuelle Pflanze in tausende Partikel
-    function shatterPlant() {
-        // Wandle Äste in Partikel um
-        branches.forEach(b => {
+    function shatterEverything() {
+        if (allBranches.length === 0 || isShattering) return;
+        isShattering = true;
+        
+        // Füge den Ästen ein paar physikalische Eigenschaften hinzu, indem wir sie in Partikel umwandeln
+        allBranches.forEach(b => {
             if (b.progress > 0) {
-                // Erstelle ein paar Partikel entlang des Astes
-                let steps = 5;
-                for (let i = 0; i <= steps; i++) {
-                    let px = b.startX + (b.endX - b.startX) * (i / steps);
-                    let py = b.startY + (b.endY - b.startY) * (i / steps);
-                    fallingParticles.push(new FallingParticle(px, py, 'rgba(130, 190, 120, 0.8)', b.width, true));
+                let steps = 4;
+                for(let i=0; i<steps; i++) {
+                    let px = b.startX + (b.endX - b.startX) * (i/steps);
+                    let py = b.startY + (b.endY - b.startY) * (i/steps);
+                    let p = new VolumetricParticle(px, py, b.z, 0);
+                    // Überschreibe Textur zu grün für Ast-Stücke
+                    p.texture = particleTextures[4].img; 
+                    p.baseSize = b.width * 2;
+                    p.currentSize = p.baseSize;
+                    p.progress = 1;
+                    allParticles.push(p);
                 }
             }
         });
-
-        // Wandle Blüten in Partikel um
-        flowers.forEach(f => {
-            if (f.progress > 0) {
-                fallingParticles.push(new FallingParticle(f.x, f.y, f.color, f.size, false));
-            }
-        });
-
-        // Leere die Arrays, da die Pflanze nun kaputt ist
-        branches = [];
-        flowers = [];
+        
+        // Zerstöre die Vektor-Äste
+        allBranches = [];
     }
 
-    // --- INTERAKTIONEN ---
-
-    let lastTapTime = 0;
-    function handleTap(e) {
-        let currentTime = Date.now();
-        let tapLength = currentTime - lastTapTime;
-        
+    // --- EINGABEN ---
+    let lastTap = 0;
+    function handleTouch(e) {
+        let now = Date.now();
+        let tapLength = now - lastTap;
         let x = e.clientX || (e.touches && e.touches[0].clientX);
         let y = e.clientY || (e.touches && e.touches[0].clientY);
 
         if (tapLength < 300 && tapLength > 0) {
-            // DOPPELKLICK erkannt -> Zerstören
-            shatterPlant();
+            shatterEverything();
         } else {
-            // EINZELKLICK erkannt -> Neu pflanzen (leicht verzögert, falls es ein Doppelklick wird)
             setTimeout(() => {
-                // Prüfen ob in der Zwischenzeit ein Doppelklick stattfand
-                if (Date.now() - lastTapTime >= 300) {
-                    if (x !== undefined && y !== undefined) {
-                        plantNew(x, y);
-                    }
+                if (Date.now() - lastTap >= 300) {
+                    if (x !== undefined && y !== undefined) plantNew(x, y);
                 }
             }, 300);
         }
-        lastTapTime = currentTime;
+        lastTap = now;
     }
 
-    window.addEventListener('pointerdown', handleTap);
+    window.addEventListener('pointerdown', handleTouch);
+    window.addEventListener('touchstart', handleTouch, {passive: true});
+    window.addEventListener('dblclick', shatterEverything);
 
-    // --- ANIMATION LOOP ---
+    // Schüttel-Sensor
+    if (window.DeviceMotionEvent) {
+        let lx = 0, ly = 0, lz = 0;
+        window.addEventListener('devicemotion', (e) => {
+            let acc = e.accelerationIncludingGravity;
+            if (!acc) return;
+            if (Math.abs(acc.x - lx) + Math.abs(acc.y - ly) + Math.abs(acc.z - lz) > 25) {
+                shatterEverything();
+            }
+            lx = acc.x; ly = acc.y; lz = acc.z;
+        });
+    }
+
+    // --- HIGH-PERFORMANCE RENDER LOOP ---
     function animate() {
-        // Kein komplett transparenter Hintergrund, sondern ein leichtes Ausblenden (Trails), 
-        // gibt dem Ganzen den "traumhaften" Nebel-Effekt
-        ctx.fillStyle = 'rgba(3, 3, 3, 0.4)';
+        // Dieser halbtransparente Hintergrund erzeugt leichte "Motion Trails"
+        // und verstärkt das nebelige, wolkige Gefühl aus dem Video.
+        ctx.fillStyle = 'rgba(2, 2, 2, 0.6)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // 1. Wachsende Äste updaten und zeichnen
-        for (let i = 0; i < branches.length; i++) {
-            branches[i].update();
-            branches[i].draw(ctx);
+        if (!isShattering) {
+            time += 0.015; // Globale Wachstums-Uhr
+            
+            // 1. Äste updaten & zeichnen
+            allBranches.forEach(b => {
+                b.update(time);
+                b.draw(ctx);
+            });
         }
 
-        // 2. Blüten-Wolken updaten und zeichnen
-        for (let i = 0; i < flowers.length; i++) {
-            flowers[i].update();
-            flowers[i].draw(ctx);
-        }
-
-        // 3. Fallende Partikel updaten und zeichnen (nach Doppelklick)
-        for (let i = fallingParticles.length - 1; i >= 0; i--) {
-            let p = fallingParticles[i];
-            p.update();
-            p.draw(ctx);
-            // Löschen, wenn sie unsichtbar sind oder aus dem Bildschirm fallen
-            if (p.alpha <= 0 || p.y > canvas.height) {
-                fallingParticles.splice(i, 1);
+        // 2. Partikel-Wolken updaten
+        for (let i = allParticles.length - 1; i >= 0; i--) {
+            let p = allParticles[i];
+            p.update(time);
+            
+            // Löschen, wenn sie unsichtbar sind (beim Shattern)
+            if (p.alpha <= 0 || p.y > height + 100) {
+                allParticles.splice(i, 1);
             }
         }
 
+        // 3. Z-SORTIERUNG (Das Herzstück des 3D-Effekts!)
+        // Wir sortieren alle existierenden Partikel nach ihrer Z-Koordinate.
+        // Was hinten ist (kleiner Z-Wert), wird zuerst gezeichnet. Was vorne ist, wird zuletzt gezeichnet.
+        // Das ergibt eine unglaublich realistische volumetrische Tiefe.
+        allParticles.sort((a, b) => a.z - b.z);
+
+        // 4. Partikel zeichnen
+        ctx.globalCompositeOperation = 'screen'; // Lässt die Farben magisch aufleuchten, wenn sie überlappen
+        allParticles.forEach(p => p.draw(ctx));
+        ctx.globalCompositeOperation = 'source-over'; // Zurücksetzen für den Hintergrund
+
         requestAnimationFrame(animate);
     }
-
+    
     animate();
 </script>
 
